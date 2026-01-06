@@ -224,10 +224,23 @@ function buildRoomUsageFromLogs(logs: KeyLog[]): RoomUsage[] {
 function buildDailyUsageFromLogs(logs: KeyLog[]): number[] {
   const counts = [0, 0, 0, 0, 0, 0, 0]; // อา..เสาร์ (จะ map ภายหลังให้เป็น จันทร์..อาทิตย์)
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayOfWeek = today.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + diffToMonday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
   logs
     .filter((log) => log.action === 'borrow')
     .forEach((log) => {
       const d = new Date(log.created_at);
+      if (d < monday || d > sunday) {
+        return;
+      }
       const day = d.getDay();
       counts[day] += 1;
     });
@@ -237,7 +250,7 @@ function buildDailyUsageFromLogs(logs: KeyLog[]): number[] {
 }
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'rooms' | 'users'>('rooms');
+  const [activeTab, setActiveTab] = useState<'rooms' | 'users' | 'history'>('rooms');
 
   const [logs, setLogs] = useState<KeyLog[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -245,6 +258,7 @@ export default function Dashboard() {
   const [dailyUsageCounts, setDailyUsageCounts] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<string | 'ALL'>('ALL');
 
   const availableCount = rooms.filter((r) => r.status === 'available').length;
   const borrowedCount = rooms.filter((r) => r.status === 'borrowed').length;
@@ -343,7 +357,6 @@ export default function Dashboard() {
         setLoading(false);
       } catch (err: any) {
         setError(err.message || 'เกิดข้อผิดพลาดในการดึงข้อมูลจาก Supabase');
-        setLoading(false);
       }
     }
 
@@ -351,6 +364,99 @@ export default function Dashboard() {
     const interval = setInterval(fetchLogs, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let sakuraInstance: any = null;
+
+    const head = document.head || document.getElementsByTagName('head')[0];
+
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/sakura-js/dist/sakura.min.css';
+    head.appendChild(link);
+
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/sakura-js/dist/sakura.min.js';
+    script.async = true;
+    script.onload = () => {
+      const SakuraGlobal: any = (window as any).Sakura;
+      if (typeof SakuraGlobal === 'function') {
+        sakuraInstance = new SakuraGlobal('body');
+      } else {
+        console.error('sakura-js global Sakura not found on window');
+      }
+    };
+    script.onerror = (e) => {
+      console.error('Failed to load sakura-js script from CDN', e);
+    };
+    head.appendChild(script);
+
+    return () => {
+      if (sakuraInstance && typeof sakuraInstance.stop === 'function') {
+        sakuraInstance.stop(true);
+      }
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+      if (link.parentNode) {
+        link.parentNode.removeChild(link);
+      }
+    };
+  }, []);
+
+  // Build user history summary from logs
+  const userHistoryMap = new Map<
+    string,
+    {
+      userName: string;
+      totalBorrows: number;
+      totalReturns: number;
+      lastActivity: string;
+    }
+  >();
+
+  logs.forEach((log: KeyLog) => {
+    const key = log.user_name || '-';
+    const existing =
+      userHistoryMap.get(key) ||
+      ({
+        userName: key,
+        totalBorrows: 0,
+        totalReturns: 0,
+        lastActivity: log.created_at,
+      } as const as {
+        userName: string;
+        totalBorrows: number;
+        totalReturns: number;
+        lastActivity: string;
+      });
+
+    const updated = { ...existing };
+
+    if (log.action === 'borrow') {
+      updated.totalBorrows += 1;
+    } else if (log.action === 'return') {
+      updated.totalReturns += 1;
+    }
+
+    if (new Date(log.created_at).getTime() > new Date(updated.lastActivity).getTime()) {
+      updated.lastActivity = log.created_at;
+    }
+
+    userHistoryMap.set(key, updated);
+  });
+
+  const userHistoryList = Array.from(userHistoryMap.values()).sort(
+    (a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
+  );
+
+  const filteredLogs: KeyLog[] = (
+    selectedUser === 'ALL'
+      ? logs
+      : logs.filter((log: KeyLog) => log.user_name === selectedUser)
+  ).slice(0, 80);
 
   // Donut chart data for key status
   const statusChartData = {
@@ -400,14 +506,22 @@ export default function Dashboard() {
     },
   };
 
-  // Daily usage data for bar chart
+  // Daily usage data for bar chart (highlight current day in orange)
+  const today = new Date();
+  const jsDay = today.getDay(); // 0=Sun .. 6=Sat
+  const todayIndexInLabels = jsDay === 0 ? 6 : jsDay - 1; // map to [Mon..Sun] index
+
+  const dailyBarColors = Array(7)
+    .fill('#3b82f6')
+    .map((color, index) => (index === todayIndexInLabels ? '#f97316' : color));
+
   const dailyUsageData = {
     labels: ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'],
     datasets: [
       {
         label: 'จำนวนครั้งที่ยืม',
         data: dailyUsageCounts,
-        backgroundColor: '#3b82f6',
+        backgroundColor: dailyBarColors,
         borderColor: '#1d4ed8',
         borderWidth: 1,
         borderRadius: 6,
@@ -468,14 +582,25 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="relative min-h-screen overflow-hidden bg-linear-to-br from-rose-950 via-slate-900 to-indigo-950">
       {/* Header */}
-      <header className="border-b border-slate-700 bg-slate-800/50 backdrop-blur-sm">
+      <header className="relative z-10 border-b border-slate-700 bg-slate-900/60 backdrop-blur-sm">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-white">🔑 Interpattanasat Key Manage</h1>
-              <p className="mt-1 text-slate-400">ติดตามสถานะการยืมคืนกุญแจห้องและผู้ใช้งาน</p>
+              <div className="inline-flex items-center gap-3 rounded-full bg-slate-900/80 px-5 py-2 shadow-lg shadow-rose-900/40 border border-rose-700/70">
+                <span className="text-2xl">🔑</span>
+                <span className="text-2xl md:text-3xl font-extrabold tracking-wide text-rose-100 drop-shadow-sm">
+                  Interpattanasat Key Management
+                </span>
+              </div>
+              <p className="mt-3 text-sm text-slate-300">
+                ระบบติดตามการยืม-คืนกุญแจห้องเรียนและทรัพย์สินของโรงเรียนแบบเรียลไทม์
+              </p>
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Dashboard สถานะล่าสุดจาก Supabase</span>
+              </div>
             </div>
             <div className="text-right">
               <p className="text-sm text-slate-400">วันที่: {new Date().toLocaleDateString('th-TH')}</p>
@@ -486,10 +611,136 @@ export default function Dashboard() {
       </header>
 
       {/* Main Content */}
-      <main className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <main className="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {loading && (
           <div className="mb-4 rounded-lg border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm text-slate-200">
             กำลังโหลดข้อมูลจาก Supabase...
+          </div>
+        )}
+
+        {/* History Tab */}
+        {activeTab === 'history' && (
+          <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-3 flex items-center justify-between">
+              <button
+                onClick={() => {
+                  setActiveTab('rooms');
+                  setSelectedUser('ALL');
+                }}
+                className="inline-flex items-center rounded-full border border-slate-600 bg-slate-800/70 px-4 py-2 text-sm font-medium text-slate-200 shadow-sm hover:border-blue-500 hover:text-blue-300"
+              >
+                ← ย้อนกลับไปหน้าสถานะห้อง
+              </button>
+            </div>
+            <div className="lg:col-span-1 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white">รายชื่อผู้ใช้ที่เคยยืมกุญแจ</h2>
+                <button
+                  onClick={() => setSelectedUser('ALL')}
+                  className={`text-xs rounded-full px-3 py-1 border transition-colors ${
+                    selectedUser === 'ALL'
+                      ? 'border-blue-500 bg-blue-500/20 text-blue-300'
+                      : 'border-slate-600 text-slate-300 hover:border-blue-500 hover:text-blue-300'
+                  }`}
+                >
+                  แสดงทั้งหมด
+                </button>
+              </div>
+              <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                {userHistoryList.map((user) => (
+                  <button
+                    key={user.userName}
+                    onClick={() => setSelectedUser(user.userName)}
+                    className={`w-full rounded-lg border px-4 py-3 text-left transition-colors ${
+                      selectedUser === user.userName
+                        ? 'border-blue-500 bg-blue-500/20'
+                        : 'border-slate-700 bg-slate-800/60 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-white">{user.userName}</p>
+                        <p className="mt-0.5 text-xs text-slate-400">
+                          อัปเดตล่าสุด:{' '}
+                          {new Date(user.lastActivity).toLocaleString('th-TH')}
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-slate-300">
+                        <p>ยืม {user.totalBorrows} ครั้ง</p>
+                        <p>คืน {user.totalReturns} ครั้ง</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+                {userHistoryList.length === 0 && (
+                  <p className="text-sm text-slate-400">ยังไม่มีประวัติการยืมในระบบ</p>
+                )}
+              </div>
+            </div>
+            <div className="lg:col-span-2">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white">
+                  ประวัติการยืมย้อนหลัง
+                </h2>
+                <p className="text-xs text-slate-400">
+                  แสดงสูงสุด {filteredLogs.length} รายการล่าสุด
+                </p>
+              </div>
+              <div className="overflow-hidden rounded-lg border border-slate-700 bg-slate-800/50 shadow-lg">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-700 bg-slate-800">
+                        <th className="px-4 py-3 text-left font-semibold text-slate-300">
+                          ผู้ใช้
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-300">
+                          ห้อง / กุญแจ
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-300">
+                          กิจกรรม
+                        </th>
+                        <th className="px-4 py-3 text-left font-semibold text-slate-300">
+                          เวลา
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-700">
+                      {filteredLogs.map((log) => (
+                        <tr key={`${log.id}-${log.created_at}`} className="hover:bg-slate-700/40">
+                          <td className="px-4 py-3 text-slate-200">{log.user_name || '-'}</td>
+                          <td className="px-4 py-3 text-slate-300">{log.key_name || '-'}</td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                                log.action === 'borrow'
+                                  ? 'bg-blue-500/20 text-blue-300'
+                                  : 'bg-emerald-500/20 text-emerald-300'
+                              }`}
+                            >
+                              {log.action === 'borrow' ? 'ยืมกุญแจ' : 'คืนกุญแจ'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-400">
+                            {new Date(log.created_at).toLocaleString('th-TH')}
+                          </td>
+                        </tr>
+                      ))}
+                      {filteredLogs.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={4}
+                            className="px-4 py-6 text-center text-sm text-slate-400"
+                          >
+                            ยังไม่มีข้อมูลประวัติการยืม
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           </div>
         )}
         {error && (
@@ -542,7 +793,7 @@ export default function Dashboard() {
 
           {/* Bar Chart */}
           <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-6 shadow-lg">
-            <h2 className="mb-6 text-xl font-bold text-white">📈 การใช้แต่ละวัน</h2>
+            <h2 className="mb-6 text-xl font-bold text-white">📈 การใช้แต่ละวัน (สัปดาห์นี้)</h2>
             <div className="h-80">
               <Bar data={dailyUsageData} options={dailyUsageOptions} />
             </div>
@@ -573,9 +824,20 @@ export default function Dashboard() {
           >
             👥 ผู้ใช้งาน (10 คน)
           </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`px-4 py-3 font-medium transition-colors ${
+              activeTab === 'history'
+                ? 'border-b-2 border-blue-500 text-blue-400'
+                : 'text-slate-400 hover:text-slate-300'
+            }`}
+          >
+            🕘 ประวัติการยืมย้อนหลัง
+          </button>
         </div>
 
-        {/* Rooms Tab */}
+        {/* Rooms Tab */
+        }
         {activeTab === 'rooms' && (
           <div className="space-y-4">
             <div className="overflow-hidden rounded-lg border border-slate-700 bg-slate-800/50 shadow-lg">
