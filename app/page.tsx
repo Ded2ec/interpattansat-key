@@ -22,6 +22,7 @@ interface Room {
   borrowedBy: string;
   borrowDate: string;
   returnDate: string;
+  returnedBy: string;
 }
 
 interface User {
@@ -164,6 +165,7 @@ function buildRoomsFromLogs(logs: KeyLog[]): Room[] {
       borrowedBy: '-',
       borrowDate: '-',
       returnDate: '-',
+      returnedBy: '-',
     });
   });
 
@@ -186,9 +188,11 @@ function buildRoomsFromLogs(logs: KeyLog[]): Room[] {
       room.borrowedBy = log.user_name || '-';
       room.borrowDate = new Date(log.created_at).toLocaleString('th-TH');
       room.returnDate = '-';
+      room.returnedBy = '-';
     } else if (log.action === 'return') {
       room.status = 'available';
       room.returnDate = new Date(log.created_at).toLocaleString('th-TH');
+      room.returnedBy = log.user_name || '-';
       if (room.borrowedBy === '-') {
         room.borrowedBy = log.user_name || '-';
       }
@@ -259,6 +263,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | 'ALL'>('ALL');
+  const [tvMode, setTvMode] = useState(false);
 
   const availableCount = rooms.filter((r) => r.status === 'available').length;
   const borrowedCount = rooms.filter((r) => r.status === 'borrowed').length;
@@ -602,9 +607,17 @@ export default function Dashboard() {
                 <span>Dashboard สถานะล่าสุดจาก Supabase</span>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-slate-400">วันที่: {new Date().toLocaleDateString('th-TH')}</p>
-              <p className="text-sm text-slate-400">เวลา: {new Date().toLocaleTimeString('th-TH')}</p>
+            <div className="text-right space-y-2">
+              <div>
+                <p className="text-sm text-slate-400">วันที่: {new Date().toLocaleDateString('th-TH')}</p>
+                <p className="text-sm text-slate-400">เวลา: {new Date().toLocaleTimeString('th-TH')}</p>
+              </div>
+              <button
+                onClick={() => setTvMode((prev) => !prev)}
+                className="inline-flex items-center justify-center rounded-full border border-blue-500/60 bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-200 shadow-sm hover:bg-blue-500/20"
+              >
+                {tvMode ? '🔙 กลับโหมดปกติ' : '📺 โหมดทีวี (แสดงบนจอใหญ่)'}
+              </button>
             </div>
           </div>
         </div>
@@ -618,8 +631,129 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* History Tab */}
-        {activeTab === 'history' && (
+        {/* TV Mode Layout */}
+        {tvMode && !loading && !error && (
+          <div className="space-y-8">
+            {/* Summary cards + donut chart for TV */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div className="lg:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl bg-emerald-600/90 p-6 text-white shadow-xl">
+                  <p className="text-sm font-medium uppercase tracking-wide opacity-90">ห้องว่าง</p>
+                  <p className="mt-2 text-4xl font-extrabold">{availableCount}</p>
+                </div>
+                <div className="rounded-2xl bg-sky-600/90 p-6 text-white shadow-xl">
+                  <p className="text-sm font-medium uppercase tracking-wide opacity-90">กำลังใช้งาน</p>
+                  <p className="mt-2 text-4xl font-extrabold">{borrowedCount}</p>
+                </div>
+                <div className="rounded-2xl bg-amber-500/90 p-6 text-white shadow-xl">
+                  <p className="text-sm font-medium uppercase tracking-wide opacity-90">รอคืน</p>
+                  <p className="mt-2 text-4xl font-extrabold">{pendingCount}</p>
+                </div>
+              </div>
+             
+            </div>
+
+            {/* Big room status + donut for TV in two columns */}
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {/* Left: room status cards inside its own container */}
+              <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4 shadow-xl">
+                <h2 className="mb-4 text-2xl font-bold text-white">สถานะห้อง (โหมดทีวี)</h2>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {rooms.map((room) => {
+                    const isAvailable = room.status === 'available';
+                    const isBorrowed = room.status === 'borrowed';
+                    const isPending = room.status === 'pending';
+
+                    const cardBg = isAvailable
+                      ? 'from-emerald-600/80 via-emerald-700/80 to-emerald-800/90'
+                      : isBorrowed
+                      ? 'from-sky-600/80 via-sky-700/80 to-sky-800/90'
+                      : 'from-amber-500/80 via-amber-600/80 to-amber-700/90';
+
+                    return (
+                      <div
+                        key={room.id}
+                        className={`flex h-full flex-col justify-between rounded-2xl bg-linear-to-br ${cardBg} p-4 text-white shadow-lg`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm uppercase tracking-wide opacity-90">ห้อง</p>
+                            <p className="text-xl font-extrabold leading-tight">{room.name}</p>
+                          </div>
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusColor(
+                              room.status
+                            )}`}
+                          >
+                            {getStatusLabel(room.status)}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-slate-100/80">ยืมโดย</span>
+                            <span className="font-semibold text-white">{room.borrowedBy}</span>
+                          </div>
+                          <div className="flex justify-between text-xs text-slate-100/80">
+                            <span>เวลา/วันที่ยืม</span>
+                            <span className="text-right text-slate-100/80">{room.borrowDate}</span>
+                          </div>
+                          <div className="flex justify-between pt-1 border-t border-white/10">
+                            <span className="text-slate-100/80">คืนโดย</span>
+                            <span className="font-semibold text-white">{room.returnedBy}</span>
+                          </div>
+                          <div className="flex justify-between text-xs text-slate-100/80">
+                            <span>เวลา/วันที่คืน</span>
+                            <span className="text-right text-slate-100/80">{room.returnDate}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Right: donut + room list as separate column */}
+              <div className="mx-auto w-full rounded-2xl border border-slate-700 bg-slate-900/80 p-6 text-white shadow-xl">
+                <h2 className="mb-4 text-xl font-semibold">ภาพรวมสถานะ (โดนัท)</h2>
+                <div className="flex flex-col items-stretch gap-8 xl:flex-row">
+                  <div className="flex items-center justify-center xl:flex-[3]">
+                    <div className="w-80 h-80 md:w-[26rem] md:h-[26rem] max-w-full">
+                      <Doughnut data={statusChartData} options={statusChartOptions} />
+                    </div>
+                  </div>
+                  <div className="xl:flex-[2] flex-1 space-y-1 pr-2 text-sm">
+                    {rooms.map((room) => (
+                      <div key={room.id} className="flex items-center justify-between gap-3 py-0.5">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`h-3 w-3 rounded-full ${
+                              room.status === 'available'
+                                ? 'bg-emerald-400'
+                                : room.status === 'borrowed'
+                                ? 'bg-sky-400'
+                                : 'bg-amber-300'
+                            }`}
+                          />
+                          <span className="text-slate-100/90">{room.name}</span>
+                        </div>
+                        <span className="whitespace-nowrap text-slate-200">
+                          {getStatusLabel(room.status)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Normal dashboard layout (non-TV mode) */}
+        {!tvMode && (
+          <>
+            {/* History Tab */}
+            {activeTab === 'history' && (
           <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="lg:col-span-3 flex items-center justify-between">
               <button
@@ -742,42 +876,42 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-        )}
-        {error && (
-          <div className="mb-4 rounded-lg border border-red-500/60 bg-red-900/40 px-4 py-3 text-sm text-red-100">
-            {error}
-          </div>
-        )}
-        {/* Stats Cards */}
-        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-lg bg-linear-to-br from-green-500 to-green-600 p-6 text-white shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium opacity-90">ห้องว่าง</p>
-                <p className="mt-2 text-3xl font-bold">{availableCount}</p>
+            )}
+            {error && (
+              <div className="mb-4 rounded-lg border border-red-500/60 bg-red-900/40 px-4 py-3 text-sm text-red-100">
+                {error}
               </div>
-              <div className="text-5xl opacity-20">✓</div>
-            </div>
-          </div>
-          <div className="rounded-lg bg-linear-to-br from-blue-500 to-blue-600 p-6 text-white shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium opacity-90">ยืมแล้ว</p>
-                <p className="mt-2 text-3xl font-bold">{borrowedCount}</p>
+            )}
+            {/* Stats Cards */}
+            <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="rounded-lg bg-linear-to-br from-green-500 to-green-600 p-6 text-white shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium opacity-90">ห้องว่าง</p>
+                    <p className="mt-2 text-3xl font-bold">{availableCount}</p>
+                  </div>
+                  <div className="text-5xl opacity-20">✓</div>
+                </div>
               </div>
-              <div className="text-5xl opacity-20">📋</div>
-            </div>
-          </div>
-          <div className="rounded-lg bg-linear-to-br from-yellow-500 to-yellow-600 p-6 text-white shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium opacity-90">รอคืน</p>
-                <p className="mt-2 text-3xl font-bold">{pendingCount}</p>
+              <div className="rounded-lg bg-linear-to-br from-blue-500 to-blue-600 p-6 text-white shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium opacity-90">ยืมแล้ว</p>
+                    <p className="mt-2 text-3xl font-bold">{borrowedCount}</p>
+                  </div>
+                  <div className="text-5xl opacity-20">📋</div>
+                </div>
               </div>
-              <div className="text-5xl opacity-20">⏳</div>
+              <div className="rounded-lg bg-linear-to-br from-yellow-500 to-yellow-600 p-6 text-white shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium opacity-90">รอคืน</p>
+                    <p className="mt-2 text-3xl font-bold">{pendingCount}</p>
+                  </div>
+                  <div className="text-5xl opacity-20">⏳</div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
 
         {/* Charts Section */}
         <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -848,6 +982,7 @@ export default function Dashboard() {
                       <th className="px-6 py-4 text-left text-sm font-semibold text-slate-300">ห้อง</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-slate-300">สถานะ</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-slate-300">ยืมโดย</th>
+                      <th className="px-6 py-4 text-left text-sm font-semibold text-slate-300">คืนโดย</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-slate-300">วันที่ยืม</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-slate-300">วันที่คืน</th>
                     </tr>
@@ -866,6 +1001,7 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-300">{room.borrowedBy}</td>
+                        <td className="px-6 py-4 text-sm text-slate-300">{room.returnedBy}</td>
                         <td className="px-6 py-4 text-sm text-slate-400">{room.borrowDate}</td>
                         <td className="px-6 py-4 text-sm text-slate-400">{room.returnDate}</td>
                       </tr>
@@ -877,33 +1013,33 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Most Used Rooms Ranking */}
-        <div className="mb-8 rounded-lg border border-slate-700 bg-slate-800/50 p-6 shadow-lg">
-          <h2 className="mb-6 text-xl font-bold text-white">🏆 อันดับห้องที่ถูกใช้งานมากที่สุด</h2>
-          <div className="space-y-3">
-            {roomUsage.map((room, index) => {
-              const medalEmoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-              return (
-                <div key={room.id} className="flex items-center gap-4">
-                  <div className="text-2xl font-bold text-yellow-400 w-8">{medalEmoji}</div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium text-white">{room.name}</span>
-                      <span className="text-sm text-slate-400">{room.usageCount} ครั้ง</span>
+            {/* Most Used Rooms Ranking */}
+            <div className="mb-8 rounded-lg border border-slate-700 bg-slate-800/50 p-6 shadow-lg">
+              <h2 className="mb-6 text-xl font-bold text-white">🏆 อันดับห้องที่ถูกใช้งานมากที่สุด</h2>
+              <div className="space-y-3">
+                {roomUsage.map((room, index) => {
+                  const medalEmoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+                  return (
+                    <div key={room.id} className="flex items-center gap-4">
+                      <div className="text-2xl font-bold text-yellow-400 w-8">{medalEmoji}</div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium text-white">{room.name}</span>
+                          <span className="text-sm text-slate-400">{room.usageCount} ครั้ง</span>
+                        </div>
+                        <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                          <div
+                            className="bg-linear-to-r from-blue-500 to-blue-400 h-full rounded-full transition-all duration-300"
+                            style={{ width: `${room.percentage * 5}%` }}
+                          />
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1">{room.percentage}% ของการใช้งานทั้งหมด</div>
+                      </div>
                     </div>
-                    <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
-                      <div
-                        className="bg-linear-to-r from-blue-500 to-blue-400 h-full rounded-full transition-all duration-300"
-                        style={{ width: `${room.percentage * 5}%` }}
-                      />
-                    </div>
-                    <div className="text-xs text-slate-400 mt-1">{room.percentage}% ของการใช้งานทั้งหมด</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                  );
+                })}
+              </div>
+            </div>
 
         {/* Users Tab */}
         {activeTab === 'users' && (
@@ -938,11 +1074,6 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-
-
-
-
-
         )}
         {showToast && toastMessage && (
           <div className="pointer-events-none fixed bottom-6 right-6 z-50 flex max-w-sm items-start gap-3 rounded-lg border border-emerald-500/60 bg-slate-900/95 px-4 py-3 text-sm text-emerald-100 shadow-xl">
@@ -953,6 +1084,8 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+        </>
+      )}
       </main>
     </div>
   );
