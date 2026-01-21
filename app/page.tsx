@@ -4,6 +4,16 @@ import { useState, useEffect, useRef } from 'react';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { Doughnut, Bar } from 'react-chartjs-2';
+import {
+  MonitorPlay,
+  ArrowLeftFromLine,
+  DoorOpen,
+  School2,
+  Computer,
+  Stethoscope,
+  UtensilsCrossed,
+  BusFront,
+} from 'lucide-react';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title, ChartDataLabels);
 
@@ -139,6 +149,36 @@ function getStatusColor(status: string) {
   }
 }
 
+function getRoomIcon(name: string) {
+  if (name.startsWith('ห้องทฤษฎี')) {
+    // ห้องเรียนทั่วไป – ใช้โทนเขียวอมฟ้า
+    return <School2 className="h-4 w-4 text-emerald-300" />;
+  }
+  if (name === 'ห้องคอม') {
+    // ห้องคอม – ใช้โทนฟ้า
+    return <Computer className="h-4 w-4 text-sky-300" />;
+  }
+  if (name === 'ห้องพยาบาล') {
+    // พยาบาล – ใช้โทนชมพู
+    return <Stethoscope className="h-4 w-4 text-rose-300" />;
+  }
+  if (name === 'ห้องพักครู') {
+    // ห้องพักครู – ใช้โทนม่วง
+    return <School2 className="h-4 w-4 text-violet-300" />;
+  }
+  if (name === 'ห้องอาหาร') {
+    // ห้องอาหาร – ใช้โทนส้ม
+    return <UtensilsCrossed className="h-4 w-4 text-amber-300" />;
+  }
+  if (name === 'รถโรงเรียน') {
+    // รถโรงเรียน – ใช้โทนเหลืองสด
+    return <BusFront className="h-4 w-4 text-yellow-300" />;
+  }
+
+  // ค่าเริ่มต้น – ประตูห้องสีฟ้าอ่อน
+  return <DoorOpen className="h-4 w-4 text-cyan-300" />;
+}
+
 function getStatusLabel(status: string) {
   switch (status) {
     case 'available':
@@ -149,6 +189,19 @@ function getStatusLabel(status: string) {
       return 'รอคืน';
     default:
       return status;
+  }
+}
+
+function getStatusTextColor(status: string) {
+  switch (status) {
+    case 'available':
+      return 'text-emerald-300';
+    case 'borrowed':
+      return 'text-sky-300';
+    case 'pending':
+      return 'text-amber-200';
+    default:
+      return 'text-slate-200';
   }
 }
 
@@ -616,7 +669,17 @@ export default function Dashboard() {
                 onClick={() => setTvMode((prev) => !prev)}
                 className="inline-flex items-center justify-center rounded-full border border-blue-500/60 bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-200 shadow-sm hover:bg-blue-500/20"
               >
-                {tvMode ? '🔙 กลับโหมดปกติ' : '📺 โหมดทีวี (แสดงบนจอใหญ่)'}
+                {tvMode ? (
+                  <>
+                    <ArrowLeftFromLine className="mr-1 h-4 w-4" />
+                    <span>กลับโหมดปกติ</span>
+                  </>
+                ) : (
+                  <>
+                    <MonitorPlay className="mr-1 h-4 w-4" />
+                    <span>โหมดทีวี (แสดงบนจอใหญ่)</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -677,7 +740,9 @@ export default function Dashboard() {
                       >
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm uppercase tracking-wide opacity-90">ห้อง</p>
+                            <div className="flex items-center gap-2 text-sm uppercase tracking-wide opacity-90">
+                              {getRoomIcon(room.name)}
+                            </div>
                             <p className="text-xl font-extrabold leading-tight">{room.name}</p>
                           </div>
                           <span
@@ -717,12 +782,12 @@ export default function Dashboard() {
               <div className="mx-auto w-full rounded-2xl border border-slate-700 bg-slate-900/80 p-6 text-white shadow-xl">
                 <h2 className="mb-4 text-xl font-semibold">ภาพรวมสถานะ (โดนัท)</h2>
                 <div className="flex flex-col items-stretch gap-8 xl:flex-row">
-                  <div className="flex items-center justify-center xl:flex-[3]">
-                    <div className="w-80 h-80 md:w-[26rem] md:h-[26rem] max-w-full">
+                  <div className="flex items-center justify-center xl:flex-3">
+                    <div className="w-80 h-80 md:w-104 md:h-104 max-w-full">
                       <Doughnut data={statusChartData} options={statusChartOptions} />
                     </div>
                   </div>
-                  <div className="xl:flex-[2] flex-1 space-y-1 pr-2 text-sm">
+                  <div className="xl:flex-2 flex-1 space-y-1 pr-2 text-sm">
                     {rooms.map((room) => (
                       <div key={room.id} className="flex items-center justify-between gap-3 py-0.5">
                         <div className="flex items-center gap-2">
@@ -737,7 +802,7 @@ export default function Dashboard() {
                           />
                           <span className="text-slate-100/90">{room.name}</span>
                         </div>
-                        <span className="whitespace-nowrap text-slate-200">
+                        <span className={`whitespace-nowrap font-medium ${getStatusTextColor(room.status)}`}>
                           {getStatusLabel(room.status)}
                         </span>
                       </div>
